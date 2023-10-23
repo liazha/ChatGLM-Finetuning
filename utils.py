@@ -113,6 +113,48 @@ class GLM2PromptDataSet(Dataset):
         return instance
 
 
+class GLM2MedPromptDataSet(Dataset):
+    def __init__(self, data_path, tokenizer, max_len, max_src_len, is_skip):
+        super().__init__()
+        self.content = self.load_json(data_path)
+        self.encoded_content = self.encode(
+            tokenizer, self.content, max_len)
+        self.features = self.encoded_content[0].keys()
+
+    def load_json(self, data_dir):
+        content = []
+        with open(data_dir, "r") as f:
+            lines = f.readlines()
+            for line in lines:
+                line = line.strip()
+                content.append(json.loads(line))
+        return content
+
+    def __getitem__(self, index):
+        return self.encoded_content[index]
+
+    def __len__(self):
+        return len(self.encoded_content)
+
+    def get_ori_item(self, index):
+        return self.content[index]
+
+    def encode(self, tokenizer, content, max_seq_length):
+        encoded_content = []
+        for example in content:
+            prompt = example["context"]
+            target = example["target"]
+            prompt_ids = tokenizer.encode(
+                prompt, max_length=max_seq_length, truncation=True)
+            target_ids = tokenizer.encode(
+                target, max_length=max_seq_length, truncation=True, add_special_tokens=False
+            )
+            input_ids = prompt_ids + target_ids + [tokenizer.eos_token_id]
+            encoded_content.append(
+                {"input_ids": input_ids, "seq_len": len(prompt_ids)})
+        return encoded_content
+
+
 class DataCollator(object):
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
