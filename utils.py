@@ -115,44 +115,48 @@ class GLM2PromptDataSet(Dataset):
 
 class GLM2MedPromptDataSet(Dataset):
     def __init__(self, data_path, tokenizer, max_len, max_src_len, is_skip):
-        super().__init__()
-        self.content = self.load_json(data_path)
-        self.encoded_content = self.encode(
-            tokenizer, self.content, max_len)
-        self.features = self.encoded_content[0].keys()
+        self.all_data = []
+        skip_data_number = 0
+        with open(data_path, "r", encoding="utf-8") as fh:
+            for i, line in enumerate(fh):
+                sample = json.loads(line.strip())
+                skip_flag = False
+                src_tokens = tokenizer.tokenize(sample["context"])
 
-    def load_json(self, data_dir):
-        content = []
-        with open(data_dir, "r") as f:
-            lines = f.readlines()
-            for line in lines:
-                line = line.strip()
-                content.append(json.loads(line))
-        return content
+                if len(src_tokens) > max_src_len:
+                    # 当输入内容超长时，随向后截断，但保留“\n\n答：”内容
+                    src_tokens = src_tokens[:max_src_len - 4] + src_tokens[-4:]
+                    skip_flag = True
 
-    def __getitem__(self, index):
-        return self.encoded_content[index]
+                max_tgt_len = max_len - 3 - len(src_tokens)
+                tgt_tokens = tokenizer.tokenize(sample["target"])
+
+                if len(tgt_tokens) > max_tgt_len:
+                    tgt_tokens = tgt_tokens[:max_tgt_len]
+                    skip_flag = True
+
+                tokens = src_tokens + tgt_tokens + ["</s>"]
+                assert len(tokens) <= max_len
+                # ChatGLM2需要增加[gMASK]、sop两个标记
+                input_ids = [tokenizer.get_command("[gMASK]"),
+                             tokenizer.get_command("sop")] + tokenizer.convert_tokens_to_ids(tokens)
+                context_length = len(src_tokens) + 2
+                labels = [-100] * context_length + input_ids[context_length:]
+
+                assert len(input_ids) == len(labels)
+                assert len(input_ids) <= max_len
+                if is_skip and skip_flag:
+                    skip_data_number += 1
+                    continue
+                self.all_data.append({"input_ids": input_ids, "labels": labels})
+        print("the number of skipping data is {}".format(skip_data_number))
 
     def __len__(self):
-        return len(self.encoded_content)
+        return len(self.all_data)
 
-    def get_ori_item(self, index):
-        return self.content[index]
-
-    def encode(self, tokenizer, content, max_seq_length):
-        encoded_content = []
-        for example in content:
-            prompt = example["context"]
-            target = example["target"]
-            prompt_ids = tokenizer.encode(
-                prompt, max_length=max_seq_length, truncation=True)
-            target_ids = tokenizer.encode(
-                target, max_length=max_seq_length, truncation=True, add_special_tokens=False
-            )
-            input_ids = prompt_ids + target_ids + [tokenizer.eos_token_id]
-            encoded_content.append(
-                {"input_ids": input_ids, "seq_len": len(prompt_ids)})
-        return encoded_content
+    def __getitem__(self, item):
+        instance = self.all_data[item]
+        return instance
 
 
 class DataCollator(object):
